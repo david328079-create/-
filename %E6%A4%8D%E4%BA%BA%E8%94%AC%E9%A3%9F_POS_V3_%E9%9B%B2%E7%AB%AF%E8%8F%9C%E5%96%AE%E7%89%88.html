@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>植人蔬食 POS V2</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;background:#f4f5f1;color:#20251f}
+header{position:sticky;top:0;background:#fff;padding:14px 16px;border-bottom:1px solid #ddd;z-index:5;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:21px;margin:0}.tabs,.cats{display:flex;gap:8px;overflow:auto;padding:10px}.tabs button,.cats button,button{border:0;border-radius:12px;padding:12px 16px;font-size:16px;background:#e5e8e1}
+.tabs button.active,.cats button.active,.primary{background:#253b2c;color:white}.page{display:none;padding:12px}.page.active{display:block}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.card{background:white;border-radius:15px;padding:12px;box-shadow:0 1px 4px #0001}
+.foodimg{height:110px;border-radius:12px;background:#e8ece5;display:flex;align-items:center;justify-content:center;font-size:38px;overflow:hidden}.foodimg img{width:100%;height:100%;object-fit:cover}
+.name{font-weight:700;margin-top:8px}.price{font-size:18px;margin-top:4px}.cart{position:sticky;bottom:0;background:#fff;border-top:1px solid #ddd;padding:12px;margin:12px -12px -12px}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:8px 0}.pill{padding:7px 10px;border-radius:999px;background:#eee}
+input,select{font-size:16px;padding:11px;border:1px solid #bbb;border-radius:10px;max-width:100%}.wide{width:100%}.big{font-size:18px;padding:15px;width:100%}
+.order{background:#fff;border-radius:14px;padding:12px;margin:10px 0;border-left:5px solid #657568}.muted{color:#687067;font-size:14px}
+.admin-item{background:#fff;padding:10px;border-radius:12px;margin:8px 0}.danger{background:#f3dddd}.ok{background:#dce9dc}
+@media(min-width:700px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.page{max-width:1100px;margin:auto}}
+</style>
+</head>
+<body>
+<header><h1>植人蔬食 POS</h1><span id="clock" class="muted"></span></header>
+<div class="tabs">
+<button class="active" onclick="showPage('pos',this)">店家點餐</button>
+<button onclick="showPage('customer',this)">客人點餐</button>
+<button onclick="showPage('orders',this)">訂單紀錄</button>
+<button onclick="showPage('admin',this)">菜單管理</button>
+</div>
+
+<section id="pos" class="page active">
+<div class="card">
+<b>用餐方式</b>
+<div class="row"><select id="posType" onchange="toggleTable('pos')"><option>內用</option><option>外帶</option></select>
+<select id="posTable"></select></div></div>
+<div id="posCats" class="cats"></div><div id="posMenu" class="grid"></div>
+<div class="cart"><div id="posCart"></div><div class="row"><b id="posTotal">合計 $0</b><button class="primary" onclick="submitOrder('pos')">確認下單／出單</button></div></div>
+</section>
+
+<section id="customer" class="page">
+<div class="card"><h2 style="margin-top:0">歡迎點餐</h2><div class="row"><select id="customerType" onchange="toggleTable('customer')"><option>內用</option><option>外帶</option></select><select id="customerTable"></select></div></div>
+<div id="customerCats" class="cats"></div><div id="customerMenu" class="grid"></div>
+<div class="cart"><div id="customerCart"></div><div class="row"><b id="customerTotal">合計 $0</b><button class="primary" onclick="submitOrder('customer')">送出訂單</button></div></div>
+</section>
+
+<section id="orders" class="page"><div class="card"><h2>今日營業</h2><div id="summary"></div></div><div id="orderList"></div></section>
+
+<section id="admin" class="page">
+<div class="card"><h2>新增餐點</h2>
+<select id="aCat"><option>主食</option><option>湯品</option><option>小菜</option><option>套餐</option></select>
+<input id="aName" placeholder="品名"><input id="aPrice" type="number" placeholder="價格">
+<input id="aImg" class="wide" placeholder="圖片網址（可留白）">
+<button class="primary" onclick="addItem()">新增餐點</button></div>
+<div class="card"><h2>套餐設定</h2><div>目前規則：主食 + $49，可選滷味 5 選 3，附固定湯品。</div>
+<label>套餐加價 <input id="setAdd" type="number" value="49" onchange="saveSettings()"></label>
+<label>滷味可選數 <input id="setPick" type="number" value="3" onchange="saveSettings()"></label></div>
+<div class="card"><h2>現有餐點</h2><div id="adminList"></div></div>
+</section>
+
+<script>
+const SUPABASE_URL='https://sdwooaceqheaxfybyymy.supabase.co', SUPABASE_KEY='sb_publishable_JWLxP4GofXjKivuwcKEEoA_pct9NUxB';
+let menu=[],orders=JSON.parse(localStorage.getItem('zhiren_orders_v2')||'[]'),settings=JSON.parse(localStorage.getItem('zhiren_settings_v2')||'{"add":49,"pick":3}'),carts={pos:[],customer:[]},cats={pos:'主食',customer:'主食'};
+for(let x of ['pos','customer']){let s=document.getElementById(x+'Table');for(let i=1;i<=8;i++)s.add(new Option(i+'號桌',i))}
+async function api(p){let r=await fetch(SUPABASE_URL+'/rest/v1/'+p,{headers:{apikey:SUPABASE_KEY,Authorization:'Bearer '+SUPABASE_KEY}});if(!r.ok)throw Error(await r.text());return r.json()}
+async function loadMenu(){try{let [cs,it]=await Promise.all([api('categories?select=*&active=eq.true&order=sort_order.asc'),api('menu_items?select=*&active=eq.true&order=sort_order.asc')]);let cm=Object.fromEntries(cs.map(c=>[c.id,c.name]));menu=it.map(i=>({id:i.id,cat:cm[i.category_id]||'其他',name:i.name,price:+i.price,img:i.image_url||''}));renderMenu('pos');renderMenu('customer');renderAdmin()}catch(e){posMenu.innerHTML=customerMenu.innerHTML='<div class="card">⚠️ 無法讀取雲端菜單</div>';console.error(e)}}
+function showPage(id,b){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');if(id==='orders')renderOrders();if(id==='admin')renderAdmin()}
+function toggleTable(x){document.getElementById(x+'Table').style.display=document.getElementById(x+'Type').value==='內用'?'':'none'}
+function renderMenu(x){let cs=[...new Set(menu.map(i=>i.cat))],c=document.getElementById(x+'Cats');c.innerHTML='';if(!cs.includes(cats[x]))cats[x]=cs[0]||'主食';cs.forEach(k=>{let b=document.createElement('button');b.textContent=k;b.className=cats[x]===k?'active':'';b.onclick=()=>{cats[x]=k;renderMenu(x)};c.appendChild(b)});let m=document.getElementById(x+'Menu');m.innerHTML='';menu.filter(i=>i.cat===cats[x]).forEach(i=>{let d=document.createElement('div');d.className='card';let pic=i.img?`<img src="${i.img}">`:'🍜';d.innerHTML=`<div class="foodimg">${x==='customer'?pic:'餐點'}</div><div class="name">${i.name}</div><div class="price">$${i.price}</div>`;d.onclick=()=>addCart(x,i);m.appendChild(d)})}
+function addCart(x,i){let note=prompt('備註（可留白，例如：加辣／不辣）','')||'';carts[x].push({...i,note});renderCart(x)}
+function renderCart(x){let d=document.getElementById(x+'Cart');d.innerHTML='';carts[x].forEach((i,n)=>{let r=document.createElement('div');r.className='row';r.innerHTML=`<span>${i.name}${i.note?'・'+i.note:''}</span><span>$${i.price} <button onclick="event.stopPropagation();removeCart('${x}',${n})">×</button></span>`;d.appendChild(r)});document.getElementById(x+'Total').textContent='合計 $'+carts[x].reduce((a,b)=>a+b.price,0)}
+function removeCart(x,n){carts[x].splice(n,1);renderCart(x)}
+function submitOrder(x){if(!carts[x].length)return alert('尚未點餐');let type=document.getElementById(x+'Type').value,table=type==='內用'?document.getElementById(x+'Table').value:null,total=carts[x].reduce((a,b)=>a+b.price,0),o={id:Date.now(),time:new Date().toISOString(),source:x==='pos'?'POS':'QR',type,table,total,items:carts[x]};orders.unshift(o);localStorage.setItem('zhiren_orders_v2',JSON.stringify(orders));carts[x]=[];renderCart(x);alert('測試訂單已送出。這一階段訂單仍先存在本機。')}
+function addItem(){alert('下一階段設定店主登入後，再開放雲端新增餐點。')} function editItem(){alert('下一階段設定店主登入後開放。')} function toggleOff(){alert('下一階段設定店主登入後開放。')} function delItem(){alert('下一階段設定店主登入後開放。')}
+function saveSettings(){settings={add:Number(setAdd.value),pick:Number(setPick.value)};localStorage.setItem('zhiren_settings_v2',JSON.stringify(settings))}
+function renderAdmin(){setAdd.value=settings.add;setPick.value=settings.pick;adminList.innerHTML='';menu.forEach(i=>{let d=document.createElement('div');d.className='admin-item';d.innerHTML=`<b>${i.cat}｜${i.name}</b> $${i.price}<div><button onclick="editItem(${i.id})">修改</button><button onclick="toggleOff(${i.id})">暫停販售</button><button class="danger" onclick="delItem(${i.id})">刪除</button></div>`;adminList.appendChild(d)})}
+function renderOrders(){let today=new Date().toLocaleDateString('en-CA'),a=orders.filter(o=>new Date(o.time).toLocaleDateString('en-CA')===today);summary.innerHTML=`訂單 <b>${a.length}</b> 筆　營業額 <b>$${a.reduce((s,o)=>s+o.total,0)}</b>`;orderList.innerHTML='';orders.forEach(o=>{let d=document.createElement('div');d.className='order',when=new Date(o.time).toLocaleString();d.innerHTML=`<div class="row"><b>${o.type}${o.table?'・'+o.table+'號桌':''}</b><span class="pill">${o.source}</span></div><div>${o.items.map(i=>i.name+(i.note?'（'+i.note+'）':'')).join('、')}</div><div class="row muted"><span>${when}</span><b>$${o.total}</b></div>`;orderList.appendChild(d)})}
+setInterval(()=>clock.textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),1000);renderCart('pos');renderCart('customer');renderOrders();loadMenu();
+</script></body></html>
